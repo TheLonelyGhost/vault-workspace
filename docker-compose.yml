@@ -1,0 +1,88 @@
+---
+version: '3.7'
+services:
+  frontend:
+    image: 'haproxy:1.9-alpine'
+    restart: 'always'
+    volumes:
+      - './haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro'
+    ports:
+      - '8200:8200'
+      - '8500:8500'
+    networks:
+      - 'consul'
+    healthcheck:
+      test: ["CMD-SHELL", "printf 'GET /v1/sys/health HTTP/1.1\nHost: 127.0.0.1:8200\nUser-Agent: MyLittlePony\nAccept: */*\n\n' | nc 127.0.0.1 8200 | grep -Fe '{'"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+    depends_on:
+      - 'consul'
+      - 'vault'
+  vault:
+    image: 'vault:1.1.1'
+    command: 'vault server -config=/vault/config'
+    environment:
+      VAULT_CLUSTER_ADDR: 'http://vault:8201'
+      VAULT_API_ADDR: 'http://vault:8200'
+      VAULT_LOCAL_CONFIG: |
+        {
+          "backend": {
+            "consul": {
+              "address": "consul:8500",
+              "path": "vault/"
+            }
+          },
+          "listener": {
+            "tcp": {
+              "address": "0.0.0.0:8200",
+              "tls_disable": 1
+            }
+          },
+          "ui": true
+        }
+    cap_add:
+      - IPC_LOCK
+    depends_on:
+      - 'consul'
+    networks:
+      - 'consul'
+    healthcheck:
+      test: ["CMD-SHELL", "printf 'GET /v1/sys/health?standbyok=true&perfstandbyok=true HTTP/1.1\nHost: 127.0.0.1:8200\nUser-Agent: MyLittlePony\nAccept: */*\n\n' | nc 127.0.0.1 8200 | grep -Fe '{'"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+    expose:
+      - '8200/tcp'
+      - '8201/tcp'
+  consul:
+    image: 'consul:1.4.4'
+    command: 'consul agent -server -recursor=1.1.1.1 -config-dir=/consul/config'
+    environment:
+      CONSUL_LOCAL_CONFIG: |
+        {
+          "bind_addr": "0.0.0.0",
+          "client_addr": "0.0.0.0",
+          "bootstrap_expect": 5,
+          "data_dir": "/consul/data",
+          "ui": true,
+          "retry_join": ["consul"],
+          "skip_leave_on_interrupt": true
+        }
+    networks:
+      - 'consul'
+    healthcheck:
+      test: ["CMD-SHELL", "printf 'GET /v1/status/leader HTTP/1.1\nHost: 127.0.0.1:8500\nUser-Agent: MyLittlePony\nAccept: */*\n\n' | nc 127.0.0.1 8500 | grep -Fe ':'"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+    expose:
+      - '8300-8302/tcp'
+      - '8301-8302/udp'
+      - '8500/tcp'
+      - '8500/udp'
+      - '8600/tcp'
+      - '8600/udp'
+
+networks:
+  consul:
